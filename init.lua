@@ -144,41 +144,77 @@ keymap.add {
   ["keypad enter"] = "list:select-entry"
 }
 
-local function make_promise()
+local function make_promise(status, queue, err, rejector)
   local STATUS = {
     PENDING = 0,
     RESOLVED = 1,
     REJECTED = 2
   }
-  local obj = { status = STATUS.PENDING, exec = {} }
 
-  function obj:finish(status, ...)
-    self.status = status
-    if self.exec[status] then
-      self.exec[status] (...)
+  local obj = { __PROMISE = true, status = status or STATUS.PENDING, queue = queue or { n = 1 }, err = err, rejector = rejector }
+  function obj:exec()
+    local proc = self.queue[self.queue.n]
+    self.queue.n = self.queue.n + 1
+
+    local errdata
+    local function on_error(msg)
+      errdata = msg .. "\n" .. debug.traceback(nil, 2)
+    end
+    local result = { xpcall(proc, on_error, table.unpack(self.resdata)) }
+
+    if not result[1] then -- call rejector
+      self.status = STATUS.REJECTED
+      self.rejdata = { errdata }
+    elseif type(result[2]) == "table" and result[2].__PROMISE then
+      result[2]:next(function(...)
+        self.status = STATUS.RESOLVED
+        self.resdata = {...}
+      end)
+      result[2]:catch(function(...)
+        self.status = STATUS.REJECTED
+        self.rejdata = {...}
+      end)
     else
-      self.data = {...}
+      self.status = STATUS.RESOLVED
+      self.resdata = {table.unpack(result, 2)}
     end
   end
-
-  function obj:resolve(...) return self:finish(STATUS.RESOLVED, ...) end
-  function obj:reject(...) return self:finish(STATUS.REJECTED, ...) end
-
-  function obj:on(status, fn)
-    local next = make_promise()
-    self.exec[status] = function(...)
-      local res = {pcall(fn, ...)}
-      next:finish(not res[1] and STATUS.REJECTED or status, table.unpack(res, 2))
+  function obj:run_next()
+    if self.queue.n <= #self.queue and self.status == STATUS.RESOLVED then
+      self:exec()
+      return self:run_next()
+    elseif self.status == STATUS.REJECTED and self.rejector then
+      self.rejector(table.unpack(self.rejdata))
     end
-    if self.status ~= STATUS.PENDING then
-      self.exec[status] (table.unpack(self.data))
-    end
-    return next
   end
-
-  function obj:next(fn) return self:on(STATUS.RESOLVED, fn) end
-  function obj:catch(fn) return self:on(STATUS.REJECTED, fn) end
-
+  function obj:next(fn)
+    table.insert(self.queue, fn)
+    local new = make_promise(self.status, self.queue, self.err, self.rejector)
+    new:run_next()
+    return new
+  end
+  function obj:catch(fn)
+    self.rejector = fn
+    local new = make_promise(self.status, self.queue, self.err, self.rejector)
+    new:run_next()
+    return new
+  end
+  function obj:resolve(...)
+    if self.status == STATUS.PENDING then
+      self.status = STATUS.RESOLVED
+      self.resdata = {...}
+      self:run_next()
+    end
+    return self
+  end
+  function obj:reject(...)
+    if self.status == STATUS.PENDING then
+      self.status = STATUS.REJECTED
+      self.rejdata = {...}
+      self:run_next()
+    end
+    return self
+  end
   return obj
 end
 
@@ -522,6 +558,24 @@ local function show_plugins(plugins)
   return v
 end
 
+local function show_options(prompt, opt)
+  local promise = make_promise()
+  core.command_view:enter(
+    prompt,
+    function(item)
+      promise:resolve(opt[item.text])
+    end,
+    function(text)
+      local res = common.fuzzy_match(opt, text)
+      for i, name in ipairs(res) do
+        res[i] = { text = name }
+      end
+      return res
+    end
+  )
+  return promise
+end
+
 function PluginManager.list_local()
   local plugins = get_local_plugins()
   local v = show_plugins(plugins)
@@ -534,10 +588,16 @@ function PluginManager.list_remote()
   core.log("Getting plugin list...")
   get_remote_plugins(PLUGIN_URL)
     :next(function(plugins)
+      local promise = make_promise()
       local v = show_plugins(plugins)
       function v:on_selected(item)
-        print(item.text)
+        promise:resolve(item)
       end
+      return promise
+    end)
+    :next(function(item)
+      print("asasasas")
+      show_options("Manage remote plugin", { "lolol" })
     end)
 end
 
