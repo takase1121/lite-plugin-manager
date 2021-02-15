@@ -454,13 +454,20 @@ end
 
 local PluginManager = {}
 
+local function noop() end
+local function collect_keys(tbl)
+  local out, i = {}, 1
+  for k, _ in pairs(tbl) do
+    out[i] = k
+    i = i + 1
+  end
+  return out
+end
+
 local function show_plugins(plugins)
   local list = {}
   for name, info in pairs(plugins) do
-    table.insert(list, {
-      text = name,
-      subtext = info.description
-    })
+    table.insert(list, { text = name, subtext = info.description })
   end
   table.sort(list, function(a, b) return string.lower(a.text) < string.lower(b.text) end)
 
@@ -483,9 +490,10 @@ local function show_plugins(plugins)
 end
 
 local function show_options(prompt, opt)
+  if not opt[1] then opt = collect_keys(opt) end
   local co = coroutine.running()
   local function on_finish(item)
-    coroutine.resume(co, item)
+    coroutine.resume(co, #item == 0 and nil or item)
   end
   local function on_cancel()
     coroutine.resume(co, nil)
@@ -501,44 +509,61 @@ local function show_options(prompt, opt)
   return coroutine.yield()
 end
 
+local local_actions = {
+  ["Delete plugin"] = function(item)
+  end,
+  ["Move plugin"]   = function(item)
+  end
+}
+local remote_actions = {
+  ["Download plugin"] = function(item)
+    if item.type == "dir" then
+      return core.error("Downloading directories are not supported!")
+    end
+
+    local status, err = client.download_file(item.url, item.path)
+    if status then
+      core.log("%s is installed as %q", item.name, item.path)
+    else
+      core.error("Error downloading plugin: %s", err)
+    end
+  end,
+  ["Copy plugin URL"] = function(item)
+    system.set_clipboard(item.url)
+    core.log("URL copied to clipboard.")
+  end
+}
+
+local function wrap_co(fn)
+  return function() coroutine.wrap(fn)() end
+end
+
 function PluginManager.list_local()
-  coroutine.wrap(function()
-    local plugins = get_local_plugins()
-    local item = show_plugins(plugins)
-    local opt = show_options("Manage local plugin", { "delete plugin", "move plugin" })
-  end)()
+  local plugins = get_local_plugins()
+
+  for item in show_plugins(plugins) do
+    local opt = show_options("Manage local plugin", local_actions)
+    if opt then command.perform "root:close" end
+
+    local action = local_actions[opt] or noop
+    action(item)
+  end
 end
 
 function PluginManager.list_remote()
-  coroutine.wrap(function()
-    core.log("Getting plugin list...")
-    local plugins = get_remote_plugins(PLUGIN_URL)
+  core.log("Getting plugin list...")
+  local plugins = get_remote_plugins(PLUGIN_URL)
 
-    for item in show_plugins(plugins) do
-      local opt = show_options("Manage remote plugin", { "download plugin", "copy plugin link" })
-      if opt and #opt > 0 then command.perform "root:close" end
+  for item in show_plugins(plugins) do
+    local opt = show_options("Manage remote plugin", remote_actions)
+    if opt then command.perform "root:close" end
 
-      if opt == "download plugin" then
-        if item.type == "file" then
-          core.log("Downloading %s...", item.name)
-          local status, err = client.download_file(item.url, item.path)
-          if status then
-            core.log("%s is installed as %q", item.name, item.path)
-          else
-            core.error("Error downloading plugin: %s", err)
-          end
-        else
-          return core.error("Unable to download external URLs")
-        end
-      elseif opt == "copy plugin link" then
-        system.set_clipboard(item.url)
-        core.log("URL copied to clipboard.")
-      end
-    end
-  end)()
+    local action = remote_actions[opt] or noop
+    action(item)
+  end
 end
 
 command.add(nil, {
-  ["plugin-manager:list-local"]  = PluginManager.list_local,
-  ["plugin-manager:list-remote"] = PluginManager.list_remote
+  ["plugin-manager:list-local"]  = wrap_co(PluginManager.list_local),
+  ["plugin-manager:list-remote"] = wrap_co(PluginManager.list_remote)
 })
