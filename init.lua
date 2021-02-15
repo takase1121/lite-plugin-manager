@@ -144,102 +144,6 @@ keymap.add {
   ["keypad enter"] = "list:select-entry"
 }
 
-local function make_promise(status, queue, err, rejector)
-  local STATUS = {
-    PENDING = 0,
-    RESOLVED = 1,
-    REJECTED = 2
-  }
-
-  local obj = { __PROMISE = true, status = status or STATUS.PENDING, queue = queue or { n = 1 }, err = err, rejector = rejector }
-  function obj:exec()
-    local proc = self.queue[self.queue.n]
-    self.queue.n = self.queue.n + 1
-
-    local errdata
-    local function on_error(msg)
-      errdata = msg .. "\n" .. debug.traceback(nil, 2)
-    end
-    local result = { xpcall(proc, on_error, table.unpack(self.resdata)) }
-
-    if not result[1] then -- call rejector
-      self.status = STATUS.REJECTED
-      self.rejdata = { errdata }
-    elseif type(result[2]) == "table" and result[2].__PROMISE then
-      result[2]:next(function(...)
-        self.status = STATUS.RESOLVED
-        self.resdata = {...}
-      end)
-      result[2]:catch(function(...)
-        self.status = STATUS.REJECTED
-        self.rejdata = {...}
-      end)
-    else
-      self.status = STATUS.RESOLVED
-      self.resdata = {table.unpack(result, 2)}
-    end
-  end
-  function obj:run_next()
-    if self.queue.n <= #self.queue and self.status == STATUS.RESOLVED then
-      self:exec()
-      return self:run_next()
-    elseif self.status == STATUS.REJECTED and self.rejector then
-      self.rejector(table.unpack(self.rejdata))
-    end
-  end
-  function obj:next(fn)
-    table.insert(self.queue, fn)
-    local new = make_promise(self.status, self.queue, self.err, self.rejector)
-    new:run_next()
-    return new
-  end
-  function obj:catch(fn)
-    self.rejector = fn
-    local new = make_promise(self.status, self.queue, self.err, self.rejector)
-    new:run_next()
-    return new
-  end
-  function obj:resolve(...)
-    if self.status == STATUS.PENDING then
-      self.status = STATUS.RESOLVED
-      self.resdata = {...}
-      self:run_next()
-    end
-    return self
-  end
-  function obj:reject(...)
-    if self.status == STATUS.PENDING then
-      self.status = STATUS.REJECTED
-      self.rejdata = {...}
-      self:run_next()
-    end
-    return self
-  end
-  return obj
-end
-
-local function promise_all(...)
-  local args = {...}
-  local n = #args
-  local new_promise = make_promise()
-  local out = {}
-  local function on_finished(i, ...)
-    out[i] = {...}
-    n = n - 1
-    if n == 0 then
-      new_promise:resolve(table.unpack(out))
-    end
-  end
-
-  for i, v in ipairs(args) do
-    v:next(function(...) on_finished(i, ...) end)
-    v:catch(function(...) new_promise:reject(...) end)
-  end
-
-  return new_promise
-end
-
-
 local Cmd = Object:extend()
 
 function Cmd:new(scan_interval)
@@ -251,17 +155,13 @@ function Cmd:new(scan_interval)
       coroutine.yield(scan_interval)
       local n, j = #self.q, 1
 
-      for i = 1, n do
-        if self:dispatch(self.q[i]) then
-          self.q[i] = nil
-        else
-          if i ~= j then
-            self.q[j] = self.q[i]
-            self.q[i] = nil
-          end
+      for _, v in ipairs(self.q) do
+        if not self:dispatch(v) then
+          self.q[j] = v
           j = j + 1
         end
       end
+      for i = j, n do self.q[i] = nil end
     end
   end)
 end
@@ -284,7 +184,7 @@ end
 
 function Cmd:dispatch(item)
   if system.get_time() > item.timeout then
-    item.promise:reject("Timeout reached")
+    coroutine.resume(item.co, nil, "Timeout reached")
     return true
   end
 
@@ -297,9 +197,9 @@ function Cmd:dispatch(item)
       os.remove(item.output)
       os.remove(item.completion)
       if item.script2 then os.remove(item.script2) end
-      item.promise:resolve(content, tonumber(completion))
+      coroutine.resume(item.co, content, tonumber(completion))
     else
-      item.promise:reject(err)
+      coroutine.resume(item.co, nil, err)
     end
     return true
   end
@@ -332,79 +232,83 @@ function Cmd:run(cmd, timeout)
     system.exec(string.format("sh %q > %q 2>&1", script, output))
   end
 
-  local promise = make_promise()
   table.insert(self.q, {
     script = script,
     script2 = PLATFORM == "Windows" and script2,
     output = output,
     completion = completion,
     timeout = system.get_time() + timeout,
-    promise = promise
+    co = coroutine.running()
   })
-  return promise
+  return coroutine.yield()
 end
+
+
+local cmd_queue = Cmd()
 
 local function first_line(str)
   return str:match("(.*)\r?\n?")
 end
 
-local cmd_queue = Cmd()
+local function process_error(content, exit)
+  if exit == 0 then
+    return content
+  else
+    return nil, first_line(content)
+  end
+end
 
 local curl = {
   name = "curl",
   runnable = function()
-    return cmd_queue:run("curl --version"):next(function(_, exit) return exit == 0 end)
+    local _, exit = cmd_queue:run("curl --version")
+    return exit == 0
   end,
   get = function(url)
-    return cmd_queue
-      :run(string.format("curl -fsSL %q", url))
-      :next(function(content, exit) if exit == 0 then return content else return nil, first_line(content) end end)
+    local content, exit = cmd_queue:run(string.format("curl -fsSL %q", url))
+    return process_error(content, exit)
   end,
   download_file = function(url, filename)
-    return cmd_queue
-      :run(string.format("curl -o %q -fsSL %q", filename, url))
-      :next(function(content, exit) if exit == 0 then return content else return nil, first_line(content) end end)
+    local content, exit = cmd_queue:run(string.format("curl -o %q -fsSL %q", filename, url))
+    return process_error(content, exit)
   end
 }
 
 local wget = {
   name = "wget",
   runnable = function()
-    return cmd_queue:run("wget --version"):next(function(_, exit) return exit == 0 end)
+    local _, exit = cmd_queue:run("wget --version")
+    return exit == 0
   end,
   get = function(url)
-    return cmd_queue
-      :run(string.format("wget -qO- %q", url))
-      :next(function(content, exit) if exit == 0 then return content else return nil, "wget exited with error code " .. exit end end)
+    local content, exit = cmd_queue:run(string.format("wget -qO- %q", url))
+    return process_error(content, exit)
   end,
   download_file = function(url, filename)
-    return cmd_queue
-      :run(string.format("wget -qO %q %q", filename, url))
-      :next(function(content, exit) if exit == 0 then return content else return nil, "wget exited with error code " .. exit end end)
+    local content, exit = cmd_queue:run(string.format("wget -qO %q %q", filename, url))
+    return process_error(content, exit)
   end
 }
 
 local powershell = {
   name = "powershell",
   runnable = function()
-    return cmd_queue:run("powershell -Version"):next(function(_, exit) return exit == 0 end)
+    local _, exit = cmd_queue:run("powershell -Version")
+    return exit == 0
   end,
   get = function(url)
-    local cmd = string.format([[
+    local content, exit = cmd_queue:run(string.format([[
       echo Invoke-WebRequest -UseBasicParsing -Uri %q ^| Select-Object -ExpandProperty Content ^
       | powershell -NoProfile -NonInteractive -NoLogo -Command -
-    ]], url)
-    return cmd_queue
-      :run(cmd)
-      :next(function(content, exit) if exit == 0 then return content else return nil, first_line(content) end end)
+    ]], url))
+    return process_error(content, exit)
   end,
   download_file = function(url, filename)
-    local cmd = string.format([[
-      echo Invoke-WebRequest -UseBasicParsing -outputFile %q -Uri %q | powershell -NoProfile -NonInteractive -NoLogo -Command -
-    ]], filename, url)
-    return cmd_queue
-      :run(cmd)
-      :next(function(content, exit) if exit == 0 then return content else return nil, first_line(content) end end)
+    local content, exit = cmd_queue:run(string.format([[
+      echo Invoke-WebRequest -UseBasicParsing -outputFile %q -Uri %q ^
+      | powershell -NoProfile -NonInteractive -NoLogo -Command -
+    ]], filename, url))
+    return process_error(content, exit)
   end
 }
 
@@ -414,20 +318,22 @@ local dummy = {
   download_file = function() error("Client is not loaded") end
 }
 
-local client = dummy
-promise_all(powershell.runnable(), curl.runnable(), wget.runnable())
-  :next(function(p, c, w)
-    p, c, w = p[1], c[1], w[1]
-    if p then
-      client = powershell
-    elseif c then
-      client = curl
-    elseif w and not c and not p then
-      client = wget
-    end
-    core.log_quiet("%s is used to download files", client.name)
-  end)
-
+local client
+local function select_client()
+  local p, c, w = powershell.runnable(), curl.runnable(), wget.runnable()
+  if p then
+    client = powershell
+  elseif c and not client then
+    client = curl
+  elseif w and not client then
+    client = wget
+  else
+    core.error("No client is available. Remote functions does not work.")
+    client = dummy
+  end
+  core.log_quiet("%s is used to download files.", client.name)
+end
+coroutine.wrap(select_client)()
 
 local function magiclines(str)
   if str:sub(-1) ~= "\n" then str = str .. "\n" end
@@ -491,34 +397,37 @@ local function url_segment(url)
   return res
 end
 
-local function get_remote_plugins(src_url)
-  return client
-    .get(src_url)
-    :next(function(content, err)
-      if not content then return error(err) end
-      local base_url = url_segment(src_url)
-      base_url = table.concat(base_url, "", 1, #base_url - 1)
+local function get_url_filename(url)
+  local seg = url_segment(url)
+  return seg[#seg]:match("/([^%?#]+)")
+end
 
-      local res = {}
-      for t, match in md_parse(content) do
-        if t == "row" then
-          local name, url = md_url_parse(match[1])
-          url = base_url .. "/" .. url
-          name = name:match("`([^`]-)`")
-          local path = PLUGIN_PATH .. PATHSEP .. name
-          local description = md_url_sub(match[2])
-          local plugin_type = match[1]:find("%*%s-") and "dir" or "file"
-          res[name] = {
-            name = name,
-            url = url,
-            path = path,
-            description = description,
-            type = plugin_type
-          }
-        end
-      end
-      return res
-    end)
+local function get_remote_plugins(src_url)
+  local content, err = client.get(src_url)
+  if not content then return error(err) end
+
+  local base_url = url_segment(src_url)
+  base_url = table.concat(base_url, "", 1, #base_url - 1)
+
+  local res = {}
+  for t, match in md_parse(content) do
+    if t == "row" then
+      local name, url = md_url_parse(match[1])
+      url = base_url .. "/" .. url
+      name = name:match("`([^`]-)`")
+      local path = PLUGIN_PATH .. PATHSEP .. get_url_filename(url)
+      local description = md_url_sub(match[2])
+      local plugin_type = match[1]:find("%*%s-") and "dir" or "file"
+      res[name] = {
+        name = name,
+        url = url,
+        path = path,
+        description = description,
+        type = plugin_type
+      }
+    end
+  end
+  return res
 end
 
 local function get_local_plugins()
@@ -549,21 +458,25 @@ local function show_plugins(plugins)
       subtext = info.description
     })
   end
+  table.sort(list, function(a, b) return string.lower(a.text) < string.lower(b.text) end)
 
+  local co = coroutine.running()
   local v = ListView(list)
+  function v:on_selected(item)
+    coroutine.resume(co, plugins[item.text])
+  end
   local node = core.root_view:get_active_node()
   node:split("down", v)
-  core.log("Listed %d item(s).", #list)
 
-  return v
+  return coroutine.yield()
 end
 
 local function show_options(prompt, opt)
-  local promise = make_promise()
+  local co = coroutine.running()
   core.command_view:enter(
     prompt,
     function(item)
-      promise:resolve(opt[item.text])
+      coroutine.resume(co, item)
     end,
     function(text)
       local res = common.fuzzy_match(opt, text)
@@ -573,32 +486,40 @@ local function show_options(prompt, opt)
       return res
     end
   )
-  return promise
+  return coroutine.yield()
 end
 
 function PluginManager.list_local()
-  local plugins = get_local_plugins()
-  local v = show_plugins(plugins)
-  function v:on_selected(item)
-    print(item.text)
-  end
+  coroutine.wrap(function()
+    local plugins = get_local_plugins()
+    local item = show_plugins(plugins)
+    local opt = show_options("Manage local plugin", { "delete plugin", "move plugin" })
+  end)()
 end
 
 function PluginManager.list_remote()
-  core.log("Getting plugin list...")
-  get_remote_plugins(PLUGIN_URL)
-    :next(function(plugins)
-      local promise = make_promise()
-      local v = show_plugins(plugins)
-      function v:on_selected(item)
-        promise:resolve(item)
+  coroutine.wrap(function()
+    core.log("Getting plugin list...")
+    local plugins = get_remote_plugins(PLUGIN_URL)
+    local item = show_plugins(plugins)
+    local opt = show_options("Manage remote plugin", { "download plugin", "copy plugin link" })
+    command.perform "root:close"
+
+    if opt == "download plugin" then
+      if item.type == "file" then
+        core.log("Downloading %s...", item.name)
+        print(item.url, item.path)
+        local status, err = client.download_file(item.url, item.path)
+        if status then
+          core.log("%s is installed as %q", item.name, item.path)
+        else
+          core.error("Error downloading plugin: %s", err)
+        end
+      else
+        return core.error("Unable to download external URLs")
       end
-      return promise
-    end)
-    :next(function(item)
-      print("asasasas")
-      show_options("Manage remote plugin", { "lolol" })
-    end)
+    end
+  end)()
 end
 
 command.add(nil, {
