@@ -197,7 +197,7 @@ function Cmd:dispatch(item)
       os.remove(item.output)
       os.remove(item.completion)
       if item.script2 then os.remove(item.script2) end
-      coroutine.resume(item.co, content, tonumber(completion))
+      coroutine.resume(item.co, content, tonumber(completion)) -- resume calling thread (in :run() later)
     else
       coroutine.resume(item.co, nil, err)
     end
@@ -240,7 +240,7 @@ function Cmd:run(cmd, timeout)
     timeout = system.get_time() + timeout,
     co = coroutine.running()
   })
-  return coroutine.yield()
+  return coroutine.yield() -- suspend this thread until queue resumes it
 end
 
 
@@ -462,30 +462,38 @@ local function show_plugins(plugins)
 
   local co = coroutine.running()
   local v = ListView(list)
-  function v:on_selected(item)
-    coroutine.resume(co, plugins[item.text])
-  end
   local node = core.root_view:get_active_node()
   node:split("down", v)
 
-  return coroutine.yield()
+  function v:on_selected(item)
+    coroutine.resume(co, plugins[item.text])
+  end
+  function v:try_close(...)
+    self.super.try_close(self, ...)
+    coroutine.resume(co, nil)
+  end
+
+  return function() -- apparently wrapping this will create an iterator that can be reused
+    return coroutine.yield()
+  end
 end
 
 local function show_options(prompt, opt)
   local co = coroutine.running()
-  core.command_view:enter(
-    prompt,
-    function(item)
-      coroutine.resume(co, item)
-    end,
-    function(text)
-      local res = common.fuzzy_match(opt, text)
-      for i, name in ipairs(res) do
-        res[i] = { text = name }
-      end
-      return res
+  local function on_finish(item)
+    coroutine.resume(co, item)
+  end
+  local function on_cancel()
+    coroutine.resume(co, nil)
+  end
+  local function on_suggest(text)
+    local res = common.fuzzy_match(opt, text)
+    for i, name in ipairs(res) do
+      res[i] = { text = name }
     end
-  )
+    return res
+  end
+  core.command_view:enter(prompt, on_finish, on_suggest, on_cancel)
   return coroutine.yield()
 end
 
@@ -501,22 +509,23 @@ function PluginManager.list_remote()
   coroutine.wrap(function()
     core.log("Getting plugin list...")
     local plugins = get_remote_plugins(PLUGIN_URL)
-    local item = show_plugins(plugins)
-    local opt = show_options("Manage remote plugin", { "download plugin", "copy plugin link" })
-    command.perform "root:close"
 
-    if opt == "download plugin" then
-      if item.type == "file" then
-        core.log("Downloading %s...", item.name)
-        print(item.url, item.path)
-        local status, err = client.download_file(item.url, item.path)
-        if status then
-          core.log("%s is installed as %q", item.name, item.path)
+    for item in show_plugins(plugins) do
+      local opt = show_options("Manage remote plugin", { "download plugin", "copy plugin link" })
+      if opt and #opt > 0 then command.perform "root:close" end
+
+      if opt == "download plugin" then
+        if item.type == "file" then
+          core.log("Downloading %s...", item.name)
+          local status, err = client.download_file(item.url, item.path)
+          if status then
+            core.log("%s is installed as %q", item.name, item.path)
+          else
+            core.error("Error downloading plugin: %s", err)
+          end
         else
-          core.error("Error downloading plugin: %s", err)
+          return core.error("Unable to download external URLs")
         end
-      else
-        return core.error("Unable to download external URLs")
       end
     end
   end)()
