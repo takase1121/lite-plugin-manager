@@ -1,0 +1,9 @@
+{
+    "Lua.diagnostics.globals": [
+        "system",
+        "renderer",
+        "EXEDIR",
+        "PATHSEP",
+        "PLATFORM"
+    ]
+}
