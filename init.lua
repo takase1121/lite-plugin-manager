@@ -464,6 +464,20 @@ local function collect_keys(tbl)
   return out
 end
 
+local function rm_r(dir)
+  local content, exit
+  if PLATFORM == "Windows" then
+    content, exit = cmd_queue:run(string.format("DEL /F /S /Q %q", dir))
+  else
+    content, exit = cmd_queue:run(string.format("rm -f -r %q", dir))
+  end
+  if exit == 0 then
+    return true
+  else
+    return nil, first_line(content)
+  end
+end
+
 local function show_plugins(plugins)
   local list = {}
   for name, info in pairs(plugins) do
@@ -511,6 +525,16 @@ end
 
 local local_actions = {
   ["Delete plugin"] = function(item)
+    if not system.show_confirm_dialog("Delete plugin", "Do you really want to delete this plugin?") then
+      return core.log("Operation cancelled.")
+    end
+
+    local status, err = rm_r(item.path)
+    if status then
+      core.log("%s is deleted.")
+    else
+      core.error("Error deleting plugin: %s", err)
+    end
   end,
   ["Move plugin"]   = function(item)
   end
