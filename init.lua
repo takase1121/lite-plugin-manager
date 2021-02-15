@@ -134,6 +134,9 @@ command.add(ListView, {
   ["list:select-entry"] = function()
     local v = core.active_view
     v:on_selected(v.data[v.selected], "left")
+  end,
+  ["list:close"] = function()
+    command.perform "root:close"
   end
 })
 
@@ -141,7 +144,8 @@ keymap.add {
   ["up"]    = "list:previous-entry",
   ["down"]  = "list:next-entry",
   ["return"] = "list:select-entry",
-  ["keypad enter"] = "list:select-entry"
+  ["keypad enter"] = "list:select-entry",
+  ["escape"] = "list:close"
 }
 
 local Cmd = Object:extend()
