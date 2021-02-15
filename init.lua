@@ -526,6 +526,9 @@ function PluginManager.list_remote()
         else
           return core.error("Unable to download external URLs")
         end
+      elseif opt == "copy plugin link" then
+        system.set_clipboard(item.url)
+        core.log("URL copied to clipboard.")
       end
     end
   end)()
