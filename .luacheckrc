@@ -5,3 +5,7 @@ globals = {
     "EXEDIR",
     "PATHSEP"
 }
+
+ignore = {
+    "212/self"
+}
