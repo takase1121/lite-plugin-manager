@@ -148,6 +148,23 @@ keymap.add {
   ["escape"] = "list:close"
 }
 
+
+local function read_file(filename)
+  local f, e = io.open(filename, "r")
+  if not f then return nil, e end
+  local content = f:read("*a")
+  f:close()
+  return content
+end
+
+local function write_file(filename, content)
+  local f, e = io.open(filename, "w")
+  if not f then return nil, e end
+  f:write(content)
+  f:close()
+  return true
+end
+
 local Cmd = Object:extend()
 
 function Cmd:new(scan_interval)
@@ -168,22 +185,6 @@ function Cmd:new(scan_interval)
       for i = j, n do self.q[i] = nil end
     end
   end)
-end
-
-local function read_file(filename)
-  local f, e = io.open(filename, "r")
-  if not f then return nil, e end
-  local content = f:read("*a")
-  f:close()
-  return content
-end
-
-local function write_file(filename, content)
-  local f, e = io.open(filename, "w")
-  if not f then return nil, e end
-  f:write(content)
-  f:close()
-  return true
 end
 
 function Cmd:dispatch(item)
@@ -383,6 +384,7 @@ local function select_client()
 end
 coroutine.wrap(select_client)()
 
+
 local function magiclines(str)
   if str:sub(-1) ~= "\n" then str = str .. "\n" end
   return str:gmatch("(.-)\n")
@@ -507,20 +509,6 @@ local function collect_keys(tbl)
   return out
 end
 
-local function rm_r(dir)
-  local content, exit
-  if PLATFORM == "Windows" then
-    content, exit = cmd_queue:run(string.format("DEL /F /S /Q %q", dir))
-  else
-    content, exit = cmd_queue:run(string.format("rm -f -r %q", dir))
-  end
-  if exit == 0 then
-    return true
-  else
-    return nil, first_line(content)
-  end
-end
-
 local function show_plugins(plugins)
   local list = {}
   for name, info in pairs(plugins) do
@@ -572,7 +560,7 @@ local local_actions = {
       return core.log("Operation cancelled.")
     end
 
-    local status, err = rm_r(item.path)
+    local status, err = rmr(item.path)
     if status then
       core.log("%s is deleted.")
     else
