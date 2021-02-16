@@ -114,7 +114,6 @@ function ListView:draw()
     common.draw_text(style.code_font, style.text, text, "left", tx, y, tw, lh1)
     y = y + lh1 + style.padding.y
     common.draw_text(style.font, style.dim, subtext, "left", tx, y, stw, lh2)
-    y = y + lh2 + style.padding.y
   end
 
   self:draw_scrollbar()
@@ -430,7 +429,7 @@ local function md_url_parse(url)
 end
 
 local function md_url_sub(str)
-  return str:gsub("%[([^%]]-)%]%(([^%)]+)%)", function(text, url) return text end)
+  return str:gsub("%[([^%]]-)%]%(([^%)]+)%)", function(text) return text end)
 end
 
 local function url_segment(url)
