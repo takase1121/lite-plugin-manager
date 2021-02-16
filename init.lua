@@ -554,6 +554,19 @@ local function show_options(prompt, opt)
   return coroutine.yield()
 end
 
+local function show_move_dest()
+  local co = coroutine.running()
+  local function on_finish(item)
+    coroutine.resume(co, #item == 0 and nil or item)
+  end
+  local function on_cancel()
+    coroutine.resume(co, nil)
+  end
+  core.command_view:enter("Move to", on_finish, common.path_suggest, on_cancel)
+  core.command_view:set_text(PLUGIN_PATH)
+  return coroutine.yield()
+end
+
 local local_actions = {
   ["Delete plugin"] = function(item)
     if not system.show_confirm_dialog("Delete plugin", "Do you really want to delete this plugin?") then
@@ -567,7 +580,29 @@ local local_actions = {
       core.error("Error deleting plugin: %s", err)
     end
   end,
-  ["Move plugin"]   = function(item)
+  ["Move plugin"] = function(item)
+    local dest = show_move_dest()
+    if not dest then return core.log("Operation cancelled.") end
+
+    local filename = item.path:match("[/\\]([^/\\]-)$")
+    if dest:sub(-1) == "/" or dest:sub(-1) == "\\" then
+      local stat = system.get_file_info(dest)
+      if stat and stat.type ~= "dir" then
+        return core.error("Error creating %q: path exists", dest)
+      else
+        local status, err = mkdirp(dest)
+        if not status then return core.error("Error creating %q: %s", dest, err) end
+      end
+      dest = dest .. filename
+    end
+
+    if dest == item.path then return core.error("Error moving plugin: destination and source are then same") end
+    local status, err = os.rename(item.path, dest)
+    if not status then
+      core.error("Error moving plugin: %s", err)
+    else
+      core.log("Moved %q to %q.", item.path, dest)
+    end
   end
 }
 local remote_actions = {
