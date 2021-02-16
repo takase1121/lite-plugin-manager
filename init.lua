@@ -148,6 +148,51 @@ keymap.add {
 }
 
 
+local function await(fn, ...)
+  local args = {...}
+  local res
+  table.insert(args, function(...) res = {...} end)
+  fn(table.unpack(args))
+  while true do
+    coroutine.yield()
+    if res then
+      return table.unpack(res)
+    end
+  end
+end
+
+local function await_all(fn, ...)
+  local YIELD_PARENT = {}
+  local args = {...}
+  local res
+  table.insert(args, function(...) res = {...} end)
+  fn(table.unpack(args))
+  local co = coroutine.create(function()
+    while true do
+      if res then
+        coroutine.yield(table.unpack(res))
+        res = nil
+      else
+        coroutine.yield(YIELD_PARENT)
+      end
+    end
+  end)
+
+  local function iter()
+    local r = table.pack(coroutine.resume(co))
+    local status, first = r[1], r[2]
+    if status then
+      if first == YIELD_PARENT then
+        coroutine.yield()
+        return iter()
+      else
+        return table.unpack(r, 2)
+      end
+    end
+  end
+  return iter
+end
+
 local function read_file(filename)
   local f, e = io.open(filename, "r")
   if not f then return nil, e end
@@ -188,7 +233,7 @@ end
 
 function Cmd:dispatch(item)
   if system.get_time() > item.timeout then
-    coroutine.resume(item.co, nil, "Timeout reached")
+    item.callback(nil, "Timeout reached")
     return true
   end
 
@@ -201,9 +246,9 @@ function Cmd:dispatch(item)
       os.remove(item.output)
       os.remove(item.completion)
       if item.script2 then os.remove(item.script2) end
-      coroutine.resume(item.co, content, tonumber(completion)) -- resume calling thread (in :run() later)
+      item.callback(content, tonumber(completion))
     else
-      coroutine.resume(item.co, nil, err)
+      item.callback(nil, err)
     end
     return true
   end
@@ -211,8 +256,11 @@ function Cmd:dispatch(item)
   return false
 end
 
-function Cmd:run(cmd, timeout)
-  timeout = timeout or 10
+function Cmd:run(cmd, timeout, callback)
+  if type(timeout) == "function" and callback == nil then
+    callback = timeout
+    timeout = 10
+  end
   local script = core.temp_filename(PLATFORM == "Windows" and ".bat")
   local script2 = core.temp_filename(PLATFORM == "Windows" and ".bat")
   local output = core.temp_filename()
@@ -242,13 +290,16 @@ function Cmd:run(cmd, timeout)
     output = output,
     completion = completion,
     timeout = system.get_time() + timeout,
-    co = coroutine.running()
+    callback = callback
   })
-  return coroutine.yield() -- suspend this thread until queue resumes it
 end
 
 
 local cmd_queue = Cmd()
+
+local function run_async(cmd)
+  return await(cmd_queue.run, cmd_queue, cmd)
+end
 
 local function first_line(str)
   return str:match("(.*)\r?\n?")
@@ -284,9 +335,9 @@ end
 local function rmr(dir)
   local content, exit
   if PLATFORM == "Windows" then
-    content, exit = cmd_queue:run(string.format("DEL /F /S /Q %q", dir))
+    content, exit = run_async(string.format("DEL /F /S /Q %q", dir))
   else
-    content, exit = cmd_queue:run(string.format("rm -f -r %q", dir))
+    content, exit = run_async(string.format("rm -f -r %q", dir))
   end
   return process_error(content, exit)
 end
@@ -294,14 +345,14 @@ end
 local function mkdirp(dir)
   local content, exit
   if PLATFORM == "Windows" then
-    content, exit = cmd_queue:run(string.format([[
+    content, exit = run_async(string.format([[
       @echo off
       setlocal enableextensions
       mkdir %q
       endlocal
     ]], dir))
   else
-    content, exit = cmd_queue:run(string.format("mkdir -p %q", dir))
+    content, exit = run_async(string.format("mkdir -p %q", dir))
   end
   return process_error(content, exit)
 end
@@ -309,15 +360,15 @@ end
 local curl = {
   name = "curl",
   runnable = function()
-    local _, exit = cmd_queue:run("curl --version")
+    local _, exit = run_async "curl --version"
     return exit == 0
   end,
   get = function(url)
-    local content, exit = cmd_queue:run(string.format("curl -fsSL %q", url))
+    local content, exit = run_async(string.format("curl -fsSL %q", url))
     return process_error(content, exit)
   end,
   download_file = function(url, filename)
-    local content, exit = cmd_queue:run(string.format("curl -o %q -fsSL %q", filename, url))
+    local content, exit = run_async(string.format("curl -o %q -fsSL %q", filename, url))
     return process_error(content, exit)
   end
 }
@@ -325,15 +376,15 @@ local curl = {
 local wget = {
   name = "wget",
   runnable = function()
-    local _, exit = cmd_queue:run("wget --version")
+    local _, exit = run_async "wget --version"
     return exit == 0
   end,
   get = function(url)
-    local content, exit = cmd_queue:run(string.format("wget -qO- %q", url))
+    local content, exit = run_async(string.format("wget -qO- %q", url))
     return process_error(content, exit)
   end,
   download_file = function(url, filename)
-    local content, exit = cmd_queue:run(string.format("wget -qO %q %q", filename, url))
+    local content, exit = run_async(string.format("wget -qO %q %q", filename, url))
     return process_error(content, exit)
   end
 }
@@ -341,18 +392,18 @@ local wget = {
 local powershell = {
   name = "powershell",
   runnable = function()
-    local _, exit = cmd_queue:run("powershell -Version")
+    local _, exit = run_async "powershell -Version"
     return exit == 0
   end,
   get = function(url)
-    local content, exit = cmd_queue:run(string.format([[
+    local content, exit = run_async(string.format([[
       echo Invoke-WebRequest -UseBasicParsing -Uri %q ^| Select-Object -ExpandProperty Content ^
       | powershell -NoProfile -NonInteractive -NoLogo -Command -
     ]], url))
     return process_error(content, exit)
   end,
   download_file = function(url, filename)
-    local content, exit = cmd_queue:run(string.format([[
+    local content, exit = run_async(string.format([[
       echo Invoke-WebRequest -UseBasicParsing -outputFile %q -Uri %q ^
       | powershell -NoProfile -NonInteractive -NoLogo -Command -
     ]], filename, url))
@@ -362,12 +413,13 @@ local powershell = {
 
 local dummy = {
   name = "dummy",
+  runnable = function() return false end,
   get = function() error("Client is not loaded") end,
   download_file = function() error("Client is not loaded") end
 }
 
 local client
-local function select_client()
+core.add_thread(function()
   local p, c, w = powershell.runnable(), curl.runnable(), wget.runnable()
   if p then
     client = powershell
@@ -380,8 +432,7 @@ local function select_client()
     client = dummy
   end
   core.log_quiet("%s is used to download files.", client.name)
-end
-coroutine.wrap(select_client)()
+end)
 
 
 local function magiclines(str)
@@ -508,39 +559,33 @@ local function collect_keys(tbl)
   return out
 end
 
-local function show_plugins(plugins)
+local function show_plugins(plugins, callback)
   local list = {}
   for name, info in pairs(plugins) do
     table.insert(list, { text = name, subtext = info.description })
   end
   table.sort(list, function(a, b) return string.lower(a.text) < string.lower(b.text) end)
 
-  local co = coroutine.running()
   local v = ListView(list)
   local node = core.root_view:get_active_node()
   node:split("down", v)
 
   function v:on_selected(item)
-    coroutine.resume(co, plugins[item.text])
+    callback(plugins[item.text])
   end
   function v:try_close(...)
     self.super.try_close(self, ...)
-    coroutine.resume(co, nil)
-  end
-
-  return function() -- apparently wrapping this will create an iterator that can be reused
-    return coroutine.yield()
+    callback()
   end
 end
 
-local function show_options(prompt, opt)
+local function show_options(prompt, opt, callback)
   if not opt[1] then opt = collect_keys(opt) end
-  local co = coroutine.running()
   local function on_finish(item)
-    coroutine.resume(co, #item == 0 and nil or item)
+    callback(#item > 0 and item)
   end
   local function on_cancel()
-    coroutine.resume(co, nil)
+    callback()
   end
   local function on_suggest(text)
     local res = common.fuzzy_match(opt, text)
@@ -550,20 +595,17 @@ local function show_options(prompt, opt)
     return res
   end
   core.command_view:enter(prompt, on_finish, on_suggest, on_cancel)
-  return coroutine.yield()
 end
 
-local function show_move_dest()
-  local co = coroutine.running()
+local function show_move_dest(callback)
   local function on_finish(item)
-    coroutine.resume(co, #item == 0 and nil or item)
+    callback(#item > 0 and item)
   end
   local function on_cancel()
-    coroutine.resume(co, nil)
+    callback()
   end
   core.command_view:enter("Move to", on_finish, common.path_suggest, on_cancel)
   core.command_view:set_text(PLUGIN_PATH)
-  return coroutine.yield()
 end
 
 local local_actions = {
@@ -623,15 +665,11 @@ local remote_actions = {
   end
 }
 
-local function wrap_co(fn)
-  return function() coroutine.wrap(fn)() end
-end
-
 function PluginManager.list_local()
   local plugins = get_local_plugins()
 
-  for item in show_plugins(plugins) do
-    local opt = show_options("Manage local plugin", local_actions)
+  for item in await_all(show_plugins, plugins) do
+    local opt = await(show_options, "Manage local plugin", local_actions)
     if opt then command.perform "root:close" end
 
     local action = local_actions[opt] or noop
@@ -643,8 +681,8 @@ function PluginManager.list_remote()
   core.log("Getting plugin list...")
   local plugins = get_remote_plugins(PLUGIN_URL)
 
-  for item in show_plugins(plugins) do
-    local opt = show_options("Manage remote plugin", remote_actions)
+  for item in await_all(show_plugins, plugins) do
+    local opt = await(show_options, "Manage remote plugin", remote_actions)
     if opt then command.perform "root:close" end
 
     local action = remote_actions[opt] or noop
@@ -652,7 +690,13 @@ function PluginManager.list_remote()
   end
 end
 
+local function wrap_coroutine(fn)
+  return function()
+    core.add_thread(fn)
+  end
+end
+
 command.add(nil, {
-  ["plugin-manager:list-local"]  = wrap_co(PluginManager.list_local),
-  ["plugin-manager:list-remote"] = wrap_co(PluginManager.list_remote)
+  ["plugin-manager:list-local"]  = wrap_coroutine(PluginManager.list_local),
+  ["plugin-manager:list-remote"] = wrap_coroutine(PluginManager.list_remote)
 })
