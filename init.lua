@@ -262,6 +262,50 @@ local function process_error(content, exit)
   end
 end
 
+local function scandir(root, maxlevel)
+  maxlevel = maxlevel or 10
+  local function scandir_worker(dir, level)
+    local d = system.list_dir(dir)
+    for _, name in ipairs(d) do
+      if not common.match_pattern(name, config.ignore_files) then
+        name = dir .. PATHSEP .. name
+        local stat = system.get_file_info(name)
+        coroutine.yield(name, stat)
+        if stat.type == "dir" then
+          if level >= maxlevel then return end
+          scandir_worker(name, level + 1)
+        end
+      end
+    end
+  end
+  return coroutine.wrap(scandir_worker), root, 1
+end
+
+local function rmr(dir)
+  local content, exit
+  if PLATFORM == "Windows" then
+    content, exit = cmd_queue:run(string.format("DEL /F /S /Q %q", dir))
+  else
+    content, exit = cmd_queue:run(string.format("rm -f -r %q", dir))
+  end
+  return process_error(content, exit)
+end
+
+local function mkdirp(dir)
+  local content, exit
+  if PLATFORM == "Windows" then
+    content, exit = cmd_queue:run(string.format([[
+      @echo off
+      setlocal enableextensions
+      mkdir %q
+      endlocal
+    ]], dir))
+  else
+    content, exit = cmd_queue:run(string.format("mkdir -p %q", dir))
+  end
+  return process_error(content, exit)
+end
+
 local curl = {
   name = "curl",
   runnable = function()
@@ -435,15 +479,14 @@ local function get_remote_plugins(src_url)
 end
 
 local function get_local_plugins()
-  local res = system.list_dir(PLUGIN_PATH)
-  for i, v in ipairs(res) do
-    res[i] = nil
-    local abspath = PLUGIN_PATH .. PATHSEP .. v
-    local stat = system.get_file_info(abspath)
-    res[v] = {
-      name = v,
-      url = (PLATFORM == "Windows" and "file:///" or "file://") .. abspath,
-      path = abspath,
+  local res = {}
+  for path, stat in scandir(PLUGIN_PATH, 2) do
+    local a, b = path:find(PLUGIN_PATH .. PATHSEP, 0, true)
+    local relpath = a and path:sub(b + 1) or path
+    res[relpath] = {
+      name = relpath,
+      url = (PLATFORM == "Windows" and "file:///" or "file://") .. path,
+      path = path,
       description = string.format("%s, last modified at %s", stat.type, os.date(nil, stat.modified)),
       type = stat.type
     }
