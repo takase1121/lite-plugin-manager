@@ -154,7 +154,7 @@ local function await(fn, ...)
   table.insert(args, function(...) res = {...} end)
   fn(table.unpack(args))
   while true do
-    coroutine.yield()
+    coroutine.yield(0.1)
     if res then
       return table.unpack(res)
     end
@@ -183,7 +183,7 @@ local function await_all(fn, ...)
     local status, first = r[1], r[2]
     if status then
       if first == YIELD_PARENT then
-        coroutine.yield()
+        coroutine.yield(0.1)
         return iter()
       else
         return table.unpack(r, 2)
