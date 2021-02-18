@@ -479,8 +479,14 @@ local function md_url_parse(url)
   return url:match("%[([^%]]-)%]%(([^%)]+)%)")
 end
 
-local function md_url_sub(str)
-  return str:gsub("%[([^%]]-)%]%(([^%)]+)%)", function(text) return text end)
+local function md_sanitize(str)
+  return str
+    :gsub("%*([^%*]-)%*", function(text) return text end) -- remove text formatting
+    :gsub("__([^_]-)__", function(text) return text end)
+    :gsub("~~([^~]-)~~", function(text) return text end)
+    :gsub("_([^_]-)_", function(text) return text end)
+    :gsub("`([^`]-)`", function(text) return text end)
+    :gsub("%[([^%]]-)%]%(([^%)]+)%)", function(text) return text end) -- remove url
 end
 
 local function url_segment(url)
@@ -535,7 +541,7 @@ local function get_remote_plugins(src_url)
       url = url:match("^http") and url or base_url .. "/" .. url
       name = name:match("`([^`]-)`")
       local path = PLUGIN_PATH .. PATHSEP .. get_url_filename(url)
-      local description = md_url_sub(match[2])
+      local description = md_sanitize(match[2])
       local plugin_type = match[1]:find("%*%s-") and "dir" or "file"
       res[name] = {
         name = name,
