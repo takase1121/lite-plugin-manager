@@ -332,7 +332,7 @@ local function rmr(dir)
   if PLATFORM == "Windows" then
     content, exit = run_async(string.format("DEL /F /S /Q %q", dir))
   else
-    content, exit = run_async(string.format("rm -f -r %q", dir))
+    content, exit = run_async(string.format("rm -rf %q", dir))
   end
   return process_error(content, exit)
 end
@@ -352,52 +352,47 @@ local function mkdirp(dir)
   return process_error(content, exit)
 end
 
-local curl = {
-  name = "curl",
-  runnable = function()
-    local _, exit = run_async "curl --version"
-    return exit == 0
-  end,
-  get = function(url)
+local curl = { name = "curl" }
+function curl.runnable()
+  local _, exit = run_async "curl --version"
+  return exit == 0
+end
+function curl.get(url)
     local content, exit = run_async(string.format("curl -fsSL %q", url))
     return process_error(content, exit)
-  end,
-  download_file = function(url, filename)
+end
+function curl.download_file(url, filename)
     local content, exit = run_async(string.format("curl -o %q -fsSL %q", filename, url))
     return process_error(content, exit)
   end
-}
 
-local wget = {
-  name = "wget",
-  runnable = function()
+local wget = { name = "wget" }
+function wget.runnable()
     local _, exit = run_async "wget --version"
     return exit == 0
-  end,
-  get = function(url)
+end
+function wget.get(url)
     local content, exit = run_async(string.format("wget -qO- %q", url))
     return process_error(content, exit)
-  end,
-  download_file = function(url, filename)
+end
+function wget.download_file(url, filename)
     local content, exit = run_async(string.format("wget -qO %q %q", filename, url))
     return process_error(content, exit)
   end
-}
 
-local powershell = {
-  name = "powershell",
-  runnable = function()
+local powershell = { name = "powershell" }
+function powershell.runnable()
     local _, exit = run_async "powershell -Version"
     return exit == 0
-  end,
-  get = function(url)
+end
+function powershell.get(url)
     local content, exit = run_async(string.format([[
       echo Invoke-WebRequest -UseBasicParsing -Uri %q ^| Select-Object -ExpandProperty Content ^
       | powershell -NoProfile -NonInteractive -NoLogo -Command -
     ]], url))
     return process_error(content, exit)
-  end,
-  download_file = function(url, filename)
+end
+function powershell.download_file(url, filename)
     local content, exit = run_async(string.format([[
       echo Invoke-WebRequest -UseBasicParsing -outputFile %q -Uri %q ^
       | powershell -NoProfile -NonInteractive -NoLogo -Command -
