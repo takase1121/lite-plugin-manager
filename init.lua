@@ -497,8 +497,23 @@ local function url_segment(url)
   return res
 end
 
-local function match_github_url(url)
-  return url:match("^https://github.com/[a-z%d]-/[A-Za-z%d_%.%-]-$")
+local services = {}
+services.github = {}
+function services.github.match(url) return url:match("^https://github.com/[^/]-/[^/]-$") end
+function services.github.git_url(url) return url end
+
+services.srht = {}
+function services.srht.match(url) return url:match("^https://git.sr.ht/[^/]-/[^/]-$") end
+function services.srht.git_url(url) return url end
+
+services.gitlab = {}
+function services.gitlab.match(url) return url:match("^https://gitlab.com/[^/]-/[^/]-$") end
+function services.gitlab.git_url(url) return url end
+
+local function match_git_services(url)
+  for name, v in pairs(services) do
+    if v.match(url) then return v, name end
+  end
 end
 
 local function get_url_filename(url)
@@ -656,7 +671,10 @@ local remote_actions = {
     if item.type == "dir" then
       if match_github_url(item.url) then
         if not git.runnable() then return core.error("git is not available.") end
-        local status, err = git.clone(item.url, item.path)
+      local service = match_git_services(item.url)
+      if not service then return core.error("Error cloning repository: invalid provider") end
+      local git_url = service.git_url(item.url)
+      local status, err = git.clone(git_url, item.path)
         if status then
           return core.log("%s is cloned to %q", item.name, item.path)
         else
