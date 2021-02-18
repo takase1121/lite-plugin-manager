@@ -178,19 +178,14 @@ local function await_all(fn, ...)
     end
   end)
 
-  local function iter()
-    local r = table.pack(coroutine.resume(co))
-    local status, first = r[1], r[2]
-    if status then
-      if first == YIELD_PARENT then
-        coroutine.yield(0.1)
-        return iter()
-      else
-        return table.unpack(r, 2)
-      end
+  return function()
+    while true do
+      coroutine.yield(0.1)
+      local r = table.pack(coroutine.resume(co))
+      if not r[1] then return end
+      if r[2] ~= YIELD_PARENT then return table.unpack(r, 2) end
     end
   end
-  return iter
 end
 
 local function read_file(filename)
