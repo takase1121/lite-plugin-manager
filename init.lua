@@ -634,9 +634,10 @@ local local_actions = {
       return core.log("Operation cancelled.")
     end
 
+    core.log("Deleting %s...", item.name)
     local status, err = rmr(item.path)
     if status then
-      core.log("%s is deleted.")
+      core.log("%s is deleted.", item.name)
     else
       core.error("Error deleting plugin: %s", err)
     end
@@ -669,21 +670,20 @@ local local_actions = {
 local remote_actions = {
   ["Download plugin"] = function(item)
     if item.type == "dir" then
-      if match_github_url(item.url) then
-        if not git.runnable() then return core.error("git is not available.") end
+      if not git.runnable() then return core.error("git is not available.") end
       local service = match_git_services(item.url)
       if not service then return core.error("Error cloning repository: invalid provider") end
       local git_url = service.git_url(item.url)
+
+      core.log("Cloning %s...", item.name)
       local status, err = git.clone(git_url, item.path)
-        if status then
-          return core.log("%s is cloned to %q", item.name, item.path)
-        else
-          return core.error("Error cloning repository: %s", err)
-        end
+      if status then
+        return core.log("%s is cloned to %q", item.name, item.path)
       else
-        return core.error("Downloading directories are not supported!")
+        return core.error("Error cloning repository: %s", err)
       end
     else
+      core.log("Downloading %s...", item.name)
       local status, err = client.download_file(item.url, item.path)
       if status then
         core.log("%s is installed as %q", item.name, item.path)
