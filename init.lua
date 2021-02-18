@@ -581,7 +581,7 @@ end
 local function show_plugins(plugins, callback)
   local list = {}
   for name, info in pairs(plugins) do
-    table.insert(list, { text = name, subtext = info.description })
+    table.insert(list, { text = name .. (info.type == "dir" and "*" or ""), subtext = info.description })
   end
   table.sort(list, function(a, b) return string.lower(a.text) < string.lower(b.text) end)
 
