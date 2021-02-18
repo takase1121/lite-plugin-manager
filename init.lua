@@ -563,6 +563,7 @@ local function show_plugins(plugins, callback)
 
   local v = ListView(list)
   local node = core.root_view:get_active_node()
+  assert(not node.locked, "Cannot open list to a locked node")
   node:split("down", v)
 
   function v:on_selected(item)
