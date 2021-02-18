@@ -617,7 +617,7 @@ local local_actions = {
     end
   end,
   ["Move plugin"] = function(item)
-    local dest = show_move_dest()
+    local dest = await(show_move_dest)
     if not dest then return core.log("Operation cancelled.") end
 
     local filename = item.path:match("[/\\]([^/\\]-)$")
