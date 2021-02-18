@@ -517,7 +517,7 @@ local function get_remote_plugins(src_url)
   for t, match in md_parse(content) do
     if t == "row" then
       local name, url = md_url_parse(match[1])
-      url = url:match("http") and url or base_url .. "/" .. url
+      url = url:match("^http") and url or base_url .. "/" .. url
       name = name:match("`([^`]-)`")
       local path = PLUGIN_PATH .. PATHSEP .. get_url_filename(url)
       local description = md_url_sub(match[2])
