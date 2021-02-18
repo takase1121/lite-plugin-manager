@@ -358,48 +358,58 @@ function curl.runnable()
   return exit == 0
 end
 function curl.get(url)
-    local content, exit = run_async(string.format("curl -fsSL %q", url))
-    return process_error(content, exit)
+  local content, exit = run_async(string.format("curl -fsSL %q", url))
+  return process_error(content, exit)
 end
 function curl.download_file(url, filename)
-    local content, exit = run_async(string.format("curl -o %q -fsSL %q", filename, url))
-    return process_error(content, exit)
-  end
+  local content, exit = run_async(string.format("curl -o %q -fsSL %q", filename, url))
+  return process_error(content, exit)
+end
 
 local wget = { name = "wget" }
 function wget.runnable()
-    local _, exit = run_async "wget --version"
-    return exit == 0
+  local _, exit = run_async "wget --version"
+  return exit == 0
 end
 function wget.get(url)
-    local content, exit = run_async(string.format("wget -qO- %q", url))
-    return process_error(content, exit)
+  local content, exit = run_async(string.format("wget -qO- %q", url))
+  return process_error(content, exit)
 end
 function wget.download_file(url, filename)
-    local content, exit = run_async(string.format("wget -qO %q %q", filename, url))
-    return process_error(content, exit)
-  end
+  local content, exit = run_async(string.format("wget -qO %q %q", filename, url))
+  return process_error(content, exit)
+end
 
 local powershell = { name = "powershell" }
 function powershell.runnable()
-    local _, exit = run_async "powershell -Version"
-    return exit == 0
+  local _, exit = run_async "powershell -Version"
+  return exit == 0
 end
 function powershell.get(url)
-    local content, exit = run_async(string.format([[
-      echo Invoke-WebRequest -UseBasicParsing -Uri %q ^| Select-Object -ExpandProperty Content ^
-      | powershell -NoProfile -NonInteractive -NoLogo -Command -
-    ]], url))
-    return process_error(content, exit)
+  local content, exit = run_async(string.format([[
+    echo Invoke-WebRequest -UseBasicParsing -Uri %q ^| Select-Object -ExpandProperty Content ^
+    | powershell -NoProfile -NonInteractive -NoLogo -Command -
+  ]], url))
+  return process_error(content, exit)
 end
 function powershell.download_file(url, filename)
-    local content, exit = run_async(string.format([[
-      echo Invoke-WebRequest -UseBasicParsing -outputFile %q -Uri %q ^
-      | powershell -NoProfile -NonInteractive -NoLogo -Command -
-    ]], filename, url))
-    return process_error(content, exit)
-  end
-}
+  local content, exit = run_async(string.format([[
+    echo Invoke-WebRequest -UseBasicParsing -outputFile %q -Uri %q ^
+    | powershell -NoProfile -NonInteractive -NoLogo -Command -
+  ]], filename, url))
+  return process_error(content, exit)
+end
+
+local git = { name = "git" }
+function git.runnable()
+  local _, exit = run_async "git --version"
+  return exit == 0
+end
+function git.clone(url, path)
+  local content, exit = run_async(string.format("git clone -q %q %q", url, path))
+  if exit ~= 0 then return process_error(content, exit) end
+  return rmr(path .. PATHSEP .. ".git")
+end
 
 local dummy = {
   name = "dummy",
@@ -485,6 +495,10 @@ local function url_segment(url)
     table.insert(res, segment)
   end
   return res
+end
+
+local function match_github_url(url)
+  return url:match("^https://github.com/[a-z%d]-/[A-Za-z%d_%.%-]-$")
 end
 
 local function get_url_filename(url)
@@ -640,14 +654,24 @@ local local_actions = {
 local remote_actions = {
   ["Download plugin"] = function(item)
     if item.type == "dir" then
-      return core.error("Downloading directories are not supported!")
-    end
-
-    local status, err = client.download_file(item.url, item.path)
-    if status then
-      core.log("%s is installed as %q", item.name, item.path)
+      if match_github_url(item.url) then
+        if not git.runnable() then return core.error("git is not available.") end
+        local status, err = git.clone(item.url, item.path)
+        if status then
+          return core.log("%s is cloned to %q", item.name, item.path)
+        else
+          return core.error("Error cloning repository: %s", err)
+        end
+      else
+        return core.error("Downloading directories are not supported!")
+      end
     else
-      core.error("Error downloading plugin: %s", err)
+      local status, err = client.download_file(item.url, item.path)
+      if status then
+        core.log("%s is installed as %q", item.name, item.path)
+      else
+        core.error("Error downloading plugin: %s", err)
+      end
     end
   end,
   ["Copy plugin URL"] = function(item)
