@@ -143,10 +143,11 @@ command.add(ListView, {
     for i, entry in ipairs(v.data) do data[i] = entry.text end
     core.command_view:enter("Find", nil, function(needle)
       local res = common.fuzzy_match(data, needle)
-      core.status_view:show_message("i", style.text, #res.." results found")
-      for i, entry in ipairs(res) do res[entry] = i; res[i] = nil end
-      table.sort(v.data, function (a, b) return (res[a.text] or 0) > (res[b.text] or 0) end)
-     -- return {}
+      core.status_view:show_message("i", style.text, #res.." result(s) found")
+      if #res > 0 then
+        for i, entry in ipairs(res) do res[entry] = i; res[i] = nil end
+        table.sort(v.data, function (a, b) return (res[a.text] or math.huge) < (res[b.text] or math.huge) end)
+      end
     end)
   end
 })
