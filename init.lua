@@ -136,6 +136,18 @@ command.add(ListView, {
   end,
   ["list:close"] = function()
     command.perform "root:close"
+  end,
+  ["list:find"] = function()
+    local v = core.active_view
+    local data = {}
+    for i, entry in ipairs(v.data) do data[i] = entry.text end
+    core.command_view:enter("Find", nil, function(needle)
+      local res = common.fuzzy_match(data, needle)
+      core.status_view:show_message("i", style.text, #res.." results found")
+      for i, entry in ipairs(res) do res[entry] = i; res[i] = nil end
+      table.sort(v.data, function (a, b) return (res[a.text] or 0) > (res[b.text] or 0) end)
+     -- return {}
+    end)
   end
 })
 
@@ -144,7 +156,8 @@ keymap.add {
   ["down"]  = "list:next-entry",
   ["return"] = "list:select-entry",
   ["keypad enter"] = "list:select-entry",
-  ["escape"] = "list:close"
+  ["escape"] = "list:close",
+  ["ctrl+f"] = "list:find"
 }
 
 
