@@ -591,7 +591,7 @@ end
 local function show_plugins(plugins, callback)
   local list = {}
   for name, info in pairs(plugins) do
-    table.insert(list, { text = name .. (info.type == "dir" and "*" or ""), subtext = info.description })
+    table.insert(list, { text = name .. (info.type == "dir" and "*" or ""), subtext = info.description, realname = name })
   end
   table.sort(list, function(a, b) return string.lower(a.text) < string.lower(b.text) end)
 
@@ -601,7 +601,7 @@ local function show_plugins(plugins, callback)
   node:split("down", v)
 
   function v:on_selected(item)
-    callback(plugins[item.text])
+    callback(plugins[item.realname])
   end
   function v:try_close(...)
     self.super.try_close(self, ...)
