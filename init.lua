@@ -176,28 +176,18 @@ local function await(fn, ...)
 end
 
 local function await_all(fn, ...)
-  local YIELD_PARENT = {}
   local args = {...}
   local res
   table.insert(args, function(...) res = {...} end)
   fn(table.unpack(args))
-  local co = coroutine.create(function()
-    while true do
-      if res then
-        coroutine.yield(table.unpack(res))
-        res = nil
-      else
-        coroutine.yield(YIELD_PARENT)
-      end
-    end
-  end)
 
   return function()
     while true do
       coroutine.yield(0.1)
-      local r = table.pack(coroutine.resume(co))
-      if not r[1] then return end
-      if r[2] ~= YIELD_PARENT then return table.unpack(r, 2) end
+      if res then
+        local temp = res; res = nil
+        return table.unpack(temp)
+      end
     end
   end
 end
