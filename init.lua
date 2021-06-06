@@ -8,11 +8,15 @@ local style = require "core.style"
 local View = require "core.view"
 local Object = require "core.object"
 
+local function is_lite_xl()
+  return core.window_mode
+end
 
 -- CONSTANTS
 local PLUGIN_PATH = system.absolute_path(USERDIR .. "/plugins")
-local PLUGIN_URL = "https://raw.githubusercontent.com/franko/lite-plugins/master/README.md"
-
+local PLUGIN_URL = is_lite_xl()
+  and "https://raw.githubusercontent.com/franko/lite-plugins/master/README.md"
+  or "https://raw.githubusercontent.com/rxi/lite-plugins/master/README.md"
 
 local ListView = View:extend()
 
@@ -598,7 +602,7 @@ local function show_plugins(plugins, callback)
 
   local v = ListView(list)
   local node = core.root_view:get_active_node()
-  if core.window_mode then -- recognise lite-xl
+  if is_lite_xl() then
     node:add_view(v)
   else
     assert(not node.locked, "Cannot open list to a locked node")
