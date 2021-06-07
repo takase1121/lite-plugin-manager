@@ -13,10 +13,16 @@ local function is_lite_xl()
 end
 
 -- CONSTANTS
-local PLUGIN_PATH = system.absolute_path(USERDIR .. "/plugins")
-local PLUGIN_URL = is_lite_xl()
-  and "https://raw.githubusercontent.com/franko/lite-plugins/master/README.md"
-  or "https://raw.githubusercontent.com/rxi/lite-plugins/master/README.md"
+local PLUGIN_PATH, PLUGIN_REPO
+if is_lite_xl() then
+  PLUGIN_PATH = USERDIR .. "/plugins"
+  PLUGIN_REPO = "franko"
+else
+  PLUGIN_PATH = EXEDIR .. "/data/plugins"
+  PLUGIN_REPO = "rxi"
+end
+PLUGIN_PATH = system.absolute_path(PLUGIN_PATH)
+local PLUGIN_URL = "https://raw.githubusercontent.com/" .. PLUGIN_REPO .. "/lite-plugins/master/README.md"
 
 local ListView = View:extend()
 
