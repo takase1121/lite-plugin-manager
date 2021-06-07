@@ -1,3 +1,4 @@
+-- mod-version:1 -- lite-xl 1.16
 local core = require "core"
 local command = require "core.command"
 local common = require "core.common"
@@ -7,11 +8,21 @@ local style = require "core.style"
 local View = require "core.view"
 local Object = require "core.object"
 
+local function is_lite_xl()
+  return core.window_mode
+end
 
 -- CONSTANTS
-local PLUGIN_PATH = system.absolute_path(EXEDIR .. "/data/plugins")
-local PLUGIN_URL = "https://raw.githubusercontent.com/rxi/lite-plugins/master/README.md"
-
+local PLUGIN_PATH, PLUGIN_REPO
+if is_lite_xl() then
+  PLUGIN_PATH = USERDIR .. "/plugins"
+  PLUGIN_REPO = "franko"
+else
+  PLUGIN_PATH = EXEDIR .. "/data/plugins"
+  PLUGIN_REPO = "rxi"
+end
+PLUGIN_PATH = system.absolute_path(PLUGIN_PATH)
+local PLUGIN_URL = "https://raw.githubusercontent.com/" .. PLUGIN_REPO .. "/lite-plugins/master/README.md"
 
 local ListView = View:extend()
 
@@ -597,8 +608,12 @@ local function show_plugins(plugins, callback)
 
   local v = ListView(list)
   local node = core.root_view:get_active_node()
-  assert(not node.locked, "Cannot open list to a locked node")
-  node:split("down", v)
+  if is_lite_xl() then
+    node:add_view(v)
+  else
+    assert(not node.locked, "Cannot open list to a locked node")
+    node:split("down", v)
+  end
 
   function v:on_selected(item)
     callback(plugins[item.realname])
